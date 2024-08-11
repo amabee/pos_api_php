@@ -19,7 +19,7 @@ class auth_endpoint
     {
         try {
             $json = json_decode($json, true);
-            $sql = "SELECT id, username, role FROM `users` WHERE username = :username AND password = :password";
+            $sql = "SELECT id, username, image,role FROM `users` WHERE username = :username AND password = :password";
             $stmt = $this->conn->prepare($sql);
             $stmt->bindParam(":username", $json["username"]);
             $stmt->bindParam(":password", $json["password"]);

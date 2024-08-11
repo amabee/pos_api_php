@@ -43,6 +43,7 @@ class store_operations
 
 $store_operations = new store_operations();
 
+
 if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST") {
     if (isset($_REQUEST['operation']) && isset($_REQUEST['json'])) {
         $operation = $_REQUEST['operation'];
