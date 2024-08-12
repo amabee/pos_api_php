@@ -27,7 +27,7 @@ class store_operations
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($result) {
-                echo json_encode($result);
+                echo json_encode(array("success" => $result));
             } else {
                 echo json_encode(array("error" => "No such item"));
             }
@@ -36,7 +36,81 @@ class store_operations
         }
     }
 
-    
+    public function holdItems($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $sql = "INSERT INTO `heldorders`(`customer_id`, `created_at`, `updated_at`, `status`) VALUES (:customer_id, :created_at, :updated_at, :status)";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([
+                ':customer_id' => $json['customer_id'],
+                ':created_at' => date('Y-m-d H:i:s'),
+                ':updated_at' => date('Y-m-d H:i:s'),
+                ':status' => 'active'
+            ]);
+
+
+            $held_order_id = $this->conn->lastInsertId();
+
+
+            $itemSql = "INSERT INTO `heldorderitems`(`held_order_id`, `product_id`, `quantity`, `price_at_time`) VALUES (:held_order_id, :product_id, :quantity, :price_at_time)";
+            $itemStmt = $this->conn->prepare($itemSql);
+
+            foreach ($json['items'] as $item) {
+                $itemStmt->execute([
+                    ':held_order_id' => $held_order_id,
+                    ':product_id' => $item['product_id'],
+                    ':quantity' => $item['quantity'],
+                    ':price_at_time' => $item['price_at_time']
+                ]);
+            }
+
+            echo json_encode(array("success" => "Order held successfully"));
+
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+    public function getHeldItems()
+    {
+        try {
+
+            $sql = "
+                SELECT heldorders.held_order_id, heldorders.customer_id, heldorders.created_at, heldorders.updated_at, heldorders.status,
+                       heldorderitems.held_order_item_id, heldorderitems.product_id, heldorderitems.price_at_time, heldorderitems.quantity,
+                       products.name, products.barcode, products.price
+                FROM heldorders
+                INNER JOIN heldorderitems ON heldorders.held_order_id = heldorderitems.held_order_id
+                LEFT JOIN products ON heldorderitems.product_id = products.id  -- join with products table if needed
+                WHERE heldorders.status = 'active'
+                ORDER BY heldorders.created_at DESC
+            ";
+
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            echo json_encode(array("success" => $results));
+
+        } catch (PDOException $e) {
+            return "Error: " . $e->getMessage();
+        }
+    }
+
+    public function getAllCustomerID()
+    {
+        try {
+            $sql = "SELECT `customer_id` FROM `heldorders`";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            echo json_encode(array("success" => $results));
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
 }
 
 
@@ -53,7 +127,15 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
             case 'getItem':
                 echo $store_operations->getItem($json);
                 break;
-
+            case 'holdItems':
+                echo $store_operations->holdItems($json);
+                break;
+            case 'getHoldItems':
+                echo $store_operations->getHeldItems();
+                break;
+            case 'getAllCustomerID':
+                echo $store_operations->getAllCustomerID();
+                break;
             default:
                 echo json_encode(["error" => "Invalid operation"]);
                 break;
