@@ -165,6 +165,106 @@ class Admin_API
         }
     }
 
+    public function toggleCashierStatus($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+
+            $fetchSql = "SELECT `status` FROM `users` WHERE id = :id";
+            $fetchStmt = $this->conn->prepare($fetchSql);
+            $fetchStmt->bindParam(":id", $json["id"], PDO::PARAM_INT);
+            $fetchStmt->execute();
+            $currentStatus = $fetchStmt->fetchColumn();
+
+            $newStatus = ($currentStatus === 'active') ? 'inactive' : 'active';
+
+            $updateSql = "UPDATE `users` SET `status` = :newStatus WHERE id = :id";
+            $updateStmt = $this->conn->prepare($updateSql);
+            $updateStmt->bindParam(":newStatus", $newStatus, PDO::PARAM_STR);
+            $updateStmt->bindParam(":id", $json["id"], PDO::PARAM_INT);
+            $result = $updateStmt->execute();
+
+            $affectedRows = $updateStmt->rowCount();
+
+            if ($result && $affectedRows > 0) {
+                echo json_encode(array("success" => "The cashier status is updated successfully"));
+            } else {
+                echo json_encode(array("error" => "No rows were updated or cashier not found"));
+            }
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => "Exception Error: {$e->getMessage()}"));
+        }
+    }
+
+    public function updateCashierInfo($json)
+    {
+        $json = json_decode($json, true);
+        $id = $json['id'] ?? null;
+
+        if (!$id) {
+            echo json_encode(array("error" => "ID is required"));
+            return;
+        }
+
+        $imagePath = null;
+
+        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+            $file = $_FILES['image'];
+            $targetDir = "images/";
+            $targetFile = $targetDir . basename($file["name"]);
+            $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+            $validExtensions = array("jpg", "jpeg", "png", "gif");
+
+            if (in_array($imageFileType, $validExtensions)) {
+                if (move_uploaded_file($file["tmp_name"], $targetFile)) {
+                    $imagePath = "/" . $targetFile;
+                } else {
+                    echo json_encode(array("error" => "Sorry, there was an error uploading your file."));
+                    return;
+                }
+            } else {
+                echo json_encode(array("error" => "Invalid file type. Only JPG, JPEG, PNG, and GIF files are allowed."));
+                return;
+            }
+        }
+
+        try {
+            $sql = "UPDATE `users` SET `firstname` = :firstname, `lastname` = :lastname, `username` = :username, 
+                `password` = :password";
+
+            if ($imagePath) {
+                $sql .= ", `image` = :image";
+            }
+
+            $sql .= " WHERE id = :id";
+
+            $stmt = $this->conn->prepare($sql);
+
+            $stmt->bindParam(":firstname", $json["firstname"], PDO::PARAM_STR);
+            $stmt->bindParam(":lastname", $json["lastname"], PDO::PARAM_STR);
+            $stmt->bindParam(":username", $json["username"], PDO::PARAM_STR);
+            $stmt->bindParam(":password", $json["password"], PDO::PARAM_STR);
+
+            if ($imagePath) {
+                $stmt->bindParam(":image", $imagePath, PDO::PARAM_STR);
+            }
+
+            $stmt->bindParam(":id", $id, PDO::PARAM_INT);
+
+            $result = $stmt->execute();
+            $affectedRows = $stmt->rowCount();
+
+            if ($result && $affectedRows > 0) {
+                echo json_encode(array("success" => "Cashier information updated successfully"));
+            } else {
+                echo json_encode(array("error" => "No rows were updated"));
+            }
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => "Exception Error: {$e->getMessage()}"));
+        }
+    }
+
 
 
 }
@@ -200,6 +300,15 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
             case 'addCashier':
                 echo $admin_api->createCashier($json);
                 break;
+
+            case 'deactivateCashier':
+                echo $admin_api->toggleCashierStatus($json);
+                break;
+
+            case 'updateCashier':
+                echo $admin_api->updateCashierInfo($json);
+                break;
+
             default:
                 echo json_encode(["error" => "Invalid operation"]);
                 break;
