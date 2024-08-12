@@ -100,6 +100,73 @@ class Admin_API
         }
     }
 
+    public function getAlLCashier()
+    {
+        try {
+            $sql = "SELECT * FROM `users` WHERE role = 'cashier'";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if (count($result) > 0) {
+                echo json_encode(array("success" => $result));
+            } else {
+                echo json_encode(array("error" => "No cashier found"));
+            }
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => "Exception Error @: {$e}"));
+        }
+    }
+
+    public function createCashier($json)
+    {
+        $json = json_decode($json, true);
+
+        $targetDir = "images/";
+
+        if (isset($_FILES['image'])) {
+            $file = $_FILES['image'];
+
+            $targetFile = $targetDir . basename($file["name"]);
+            $fullPath = "/" . $targetFile;
+            $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+            $validExtensions = array("jpg", "jpeg", "png", "gif");
+
+            if (in_array($imageFileType, $validExtensions)) {
+                if (move_uploaded_file($file["tmp_name"], $targetFile)) {
+                    try {
+                        $sql = "INSERT INTO `users`(`firstname`, `lastname`, `username`, `password`, `image`, `role`, `created_at`) 
+                                VALUES (:firstname, :lastname, :username, :password , :image, 'cashier', NOW())";
+                        $stmt = $this->conn->prepare($sql);
+                        $stmt->bindParam(":firstname", $json["firstname"], PDO::PARAM_STR);
+                        $stmt->bindParam(":lastname", $json["lastname"], PDO::PARAM_STR);
+                        $stmt->bindParam(":username", $json["username"], PDO::PARAM_STR);
+                        $stmt->bindParam(":password", $json["password"], PDO::PARAM_STR);
+                        $stmt->bindParam(":image", $fullPath, PDO::PARAM_STR);
+
+                        $result = $stmt->execute();
+
+                        if ($result) {
+                            echo json_encode(array("success" => "Added Cashier Successfully"));
+                        } else {
+                            echo json_encode(array("error" => "Something went wrong while adding the cashier"));
+                        }
+                    } catch (PDOException $e) {
+                        echo json_encode(array("error" => "Exception Error: {$e}"));
+                    }
+                } else {
+                    echo json_encode(array("error" => "Sorry, there was an error uploading your file."));
+                }
+            } else {
+                echo json_encode(array("error" => "Invalid file type. Only JPG, JPEG, PNG, and GIF files are allowed."));
+            }
+        } else {
+            echo json_encode(array("error" => "No image file was uploaded."));
+        }
+    }
+
+
+
 }
 
 $admin_api = new Admin_API();
@@ -125,6 +192,13 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
 
             case 'updateProduct':
                 echo $admin_api->updateProduct($json);
+                break;
+
+            case 'getAllCashier':
+                echo $admin_api->getAlLCashier();
+                break;
+            case 'addCashier':
+                echo $admin_api->createCashier($json);
                 break;
             default:
                 echo json_encode(["error" => "Invalid operation"]);
