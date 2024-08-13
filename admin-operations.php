@@ -265,6 +265,166 @@ class Admin_API
         }
     }
 
+    public function getTotalSales()
+    {
+        try {
+            $sql = "SELECT SUM(total_amount) AS total_amount_sum
+                    FROM transactions
+                    WHERE YEAR(transaction_date) = YEAR(CURDATE())";
+
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Cast the result to float. If no result is found, use 0.0.
+            $totalAmountSum = isset($result['total_amount_sum']) ? (float) $result['total_amount_sum'] : 0.0;
+
+            // Encode as JSON
+            echo json_encode(array("success" => $totalAmountSum));
+
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function getTotalDaySale()
+    {
+        try {
+
+            $sql = "SELECT SUM(total_amount) AS total_amount_sum
+                    FROM transactions
+                    WHERE DATE(transaction_date) = CURDATE()";
+
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            $totalAmountSum = isset($result['total_amount_sum']) ? (float) $result['total_amount_sum'] : 0.0;
+
+            echo json_encode(array("success" => $totalAmountSum));
+
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function getTransactionByCashiers()
+    {
+        try {
+
+            $sql = "SELECT u.id AS cashier_id, u.firstname, u.lastname, u.image, SUM(t.total_amount) AS total_amount_sum
+                    FROM transactions t
+                    INNER JOIN users u ON t.cashier_id = u.id
+                    WHERE u.role = 'cashier'
+                    AND DATE(t.transaction_date) = CURDATE()
+                    GROUP BY u.id, u.firstname, u.lastname";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            echo json_encode(array("success" => $transactions));
+
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+
+    public function getMostPurchasedItems()
+    {
+        try {
+            $sql = "SELECT ti.product_id, p.name, SUM(ti.quantity) AS total_quantity
+                    FROM transaction_items ti
+                    INNER JOIN transactions t ON ti.transaction_id = t.id
+                    INNER JOIN products p ON ti.product_id = p.id
+                    WHERE DATE(t.transaction_date) = CURDATE()
+                    GROUP BY ti.product_id, p.name
+                    ORDER BY total_quantity DESC
+                    LIMIT 5";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            $topItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            echo json_encode(array("success" => $topItems));
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+    public function getOrderCount()
+    {
+        try {
+            $sql = "SELECT COUNT(*) AS total_orders FROM transactions WHERE DATE(transaction_date) = CURDATE()";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $totalOrderCount = isset($result["total_orders"]) ? (int) $result['total_orders'] : 0;
+
+            echo json_encode(array("success" => $totalOrderCount));
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+
+        }
+    }
+
+  
+    public function getVoidItems()
+    {
+        try {
+
+            $sql = "SELECT 
+                    void_items.pid AS void_id, 
+                    void_items.product_id, 
+                    void_items.cashier_id, 
+                    void_items.void_reason, 
+                    void_items.void_date, 
+                    void_items.void_status,
+                    products.name AS product_name, 
+                    users.firstname AS cashier_firstname, 
+                    users.lastname AS cashier_lastname
+                FROM void_items
+                INNER JOIN products ON void_items.product_id = products.id 
+                INNER JOIN users ON void_items.cashier_id = users.id
+                WHERE void_items.void_status = 'pending';
+                    ";
+
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+
+            $voidedItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return json_encode(array("success" => $voidedItems));
+
+        } catch (PDOException $e) {
+            return json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function updateVoidItem($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+
+            $sql = "UPDATE void_items 
+                    SET void_status = 'voided' 
+                    WHERE pid = :id AND void_status = 'pending'";
+
+            $stmt = $this->conn->prepare($sql);
+
+            $stmt->bindParam(":id", $json["id"], PDO::PARAM_INT);
+
+            $result = $stmt->execute();
+
+            if ($result && $stmt->rowCount() > 0) {
+                echo json_encode(array("success" => "Void status updated successfully"));
+            } else {
+                echo json_encode(array("error" => "No matching records found or status already updated"));
+            }
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
 
 
 }
@@ -309,6 +469,34 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
                 echo $admin_api->updateCashierInfo($json);
                 break;
 
+            case 'getAllTotalSales':
+                echo $admin_api->getTotalSales();
+                break;
+
+            case 'getTotalDaySales':
+                echo $admin_api->getTotalDaySale();
+                break;
+
+            case "getSalesByCashier":
+                echo $admin_api->getTransactionByCashiers();
+                break;
+
+            case "getOrderCount":
+                echo $admin_api->getOrderCount();
+                break;
+
+            case "getMostPurchasedItem":
+                echo $admin_api->getMostPurchasedItems();
+                break;
+
+
+            case "getVoidItems":
+                echo $admin_api->getVoidItems();
+                break;
+
+            case "updateVoidItems":
+                echo $admin_api->updateVoidItem($json);
+                break;
             default:
                 echo json_encode(["error" => "Invalid operation"]);
                 break;
