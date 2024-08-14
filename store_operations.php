@@ -268,13 +268,15 @@ class store_operations
         }
 
         try {
-            $sql = "INSERT INTO void_items (cashier_id, product_id, void_reason, void_date, void_status)
-                    VALUES (:cashier_id, :product_id, :void_reason, NOW(), 'pending')";
+            $sql = "INSERT INTO void_items (cashier_id, product_id, amount ,void_reason, void_date, void_status)
+                    VALUES (:cashier_id, :product_id, :amount ,:void_reason, NOW(), 'pending')";
             $stmt = $this->conn->prepare($sql);
 
             $stmt->bindParam(':cashier_id', $data['cashier_id'], PDO::PARAM_INT);
             $stmt->bindParam(':product_id', $data['product_id'], PDO::PARAM_INT);
+            $stmt->bindParam(':amount', $data['amount'], PDO::PARAM_INT);
             $stmt->bindParam(':void_reason', $data['void_reason'], PDO::PARAM_STR);
+
 
             $result = $stmt->execute();
 
@@ -321,105 +323,40 @@ class store_operations
         }
     }
 
-    public function insertShiftSummary($json)
+    public function getMyTotalSales($json)
     {
-        $json = json_decode($json, true);
+        $json = json_decode($json, true); // Decode JSON input
+        $cashierId = $json['cashier_id'] ?? null; // Get cashier_id from JSON
+
+        if (!$cashierId) {
+            return json_encode(array("error" => "Cashier ID is required."));
+        }
 
         try {
-            $shiftId = $json['shift_id'];
-            $cashierId = $json['cashier_id'];
-            $currentDate = date('Y-m-d');
 
-            // Fetch shift start and end times
-            $shiftSql = "
-            SELECT shift_start, shift_end 
-            FROM shifts 
-            WHERE id = :shift_id
-            ";
-            $shiftStmt = $this->conn->prepare($shiftSql);
-            $shiftStmt->bindParam(":shift_id", $shiftId, PDO::PARAM_INT);
-            $shiftStmt->execute();
+            $salesSql = "SELECT SUM(total_amount) AS total_sales FROM transactions WHERE cashier_id = :cashier_id";
+            $salesStmt = $this->conn->prepare($salesSql);
+            $salesStmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
+            $salesStmt->execute();
+            $salesResult = $salesStmt->fetch(PDO::FETCH_ASSOC);
 
-            $shift = $shiftStmt->fetch(PDO::FETCH_ASSOC);
+            $voidsSql = "SELECT SUM(amount) AS total_voids FROM void_items WHERE void_status = 'voided' AND cashier_id = :cashier_id";
+            $voidsStmt = $this->conn->prepare($voidsSql);
+            $voidsStmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
+            $voidsStmt->execute();
+            $voidsResult = $voidsStmt->fetch(PDO::FETCH_ASSOC);
 
-            if (!$shift) {
-                echo json_encode(array("error" => "Shift not found."));
-                return;
-            }
+            $totalSales = $salesResult['total_sales'] ?? 0;
+            $totalVoids = $voidsResult['total_voids'] ?? 0;
+            $netSales = $totalSales - $totalVoids;
 
-            $shiftStart = $shift['shift_start'];
-            $shiftEnd = $shift['shift_end'];
-
-            // Convert shift start and end to proper format for BETWEEN clause
-            $shiftStart = $currentDate . ' ' . $shiftStart;
-            $shiftEnd = $currentDate . ' ' . $shiftEnd;
-
-            // Ensure shift end time includes the current date and does not cross midnight
-            if (strtotime($shiftEnd) < strtotime($shiftStart)) {
-                // Handle case where shift end is on the next day
-                $shiftEnd = date('Y-m-d', strtotime('+1 day', strtotime($shiftEnd))) . ' ' . $shiftEnd;
-            }
-
-            // Query to get total sales and transactions
-            $sql = "
-                            SELECT 
-                    SUM(total_amount) AS total_sales,
-                    COUNT(*) AS total_transactions
-                FROM transactions
-                INNER JOIN users ON transactions.cashier_id = users.id
-                INNER JOIN shifts ON users.shift_id = shifts.id
-                WHERE transactions.cashier_id = :cashier_id
-                AND DATE(transaction_date) = CURRENT_DATE;
-            ";
-            $stmt = $this->conn->prepare($sql);
-            $stmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
-            $stmt->execute();
-
-            $result = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$result) {
-                echo json_encode(array("error" => "No transactions found for the given shift and cashier."));
-                return;
-            }
-
-            // Query to get total voids
-            $voidSql = "
-            SELECT 
-                COUNT(*) AS total_voids
-            FROM void_items
-            WHERE cashier_id = :cashier_id 
-            AND void_date BETWEEN :shift_start AND :shift_end
-            AND void_status = 'void'
-            ";
-            $voidStmt = $this->conn->prepare($voidSql);
-            $voidStmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
-            $voidStmt->bindParam(":shift_start", $shiftStart);
-            $voidStmt->bindParam(":shift_end", $shiftEnd);
-            $voidStmt->execute();
-
-            $voidResult = $voidStmt->fetch(PDO::FETCH_ASSOC);
-
-            // Insert into shift_summaries
-            $sql = "
-            INSERT INTO shift_summaries (user_id, total_sales, total_transactions, total_voids, created_at)
-            VALUES (:user_id, :total_sales, :total_transactions, :total_voids, NOW())
-            ";
-            $stmt = $this->conn->prepare($sql);
-            $stmt->bindParam(":user_id", $cashierId, PDO::PARAM_INT);
-            $stmt->bindParam(":total_sales", $result["total_sales"]);
-            $stmt->bindParam(":total_transactions", $result["total_transactions"], PDO::PARAM_INT);
-            $stmt->bindParam(":total_voids", $voidResult["total_voids"], PDO::PARAM_INT);
-
-            $executeResult = $stmt->execute();
-
-            if ($executeResult) {
-                echo json_encode(array("success" => "Shift summary successfully added"));
-            } else {
-                echo json_encode(array("error" => "Something went wrong inserting the shift summary"));
-            }
-
+            echo json_encode(array(
+                "total_sales" => $totalSales,
+                "total_voids" => $totalVoids,
+                "net_sales" => $netSales
+            ));
         } catch (PDOException $e) {
-            echo json_encode(array("error" => "Exception Error: {$e->getMessage()}"));
+            echo json_encode(array("error" => $e->getMessage()));
         }
     }
 
@@ -474,8 +411,8 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
                 echo $store_operations->checkForVoidItemStatus($json);
                 break;
 
-            case "insertShiftSummary":
-                echo $store_operations->insertShiftSummary($json);
+            case "getMyTotalSales":
+                echo $store_operations->getMyTotalSales($json);
                 break;
 
             default:
