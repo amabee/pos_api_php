@@ -268,21 +268,22 @@ class store_operations
         }
 
         try {
-
             $sql = "INSERT INTO void_items (cashier_id, product_id, void_reason, void_date, void_status)
                     VALUES (:cashier_id, :product_id, :void_reason, NOW(), 'pending')";
             $stmt = $this->conn->prepare($sql);
-
 
             $stmt->bindParam(':cashier_id', $data['cashier_id'], PDO::PARAM_INT);
             $stmt->bindParam(':product_id', $data['product_id'], PDO::PARAM_INT);
             $stmt->bindParam(':void_reason', $data['void_reason'], PDO::PARAM_STR);
 
-
             $result = $stmt->execute();
 
             if ($result) {
-                return json_encode(array("success" => "Waiting for void approval"));
+                $void_item_id = $this->conn->lastInsertId();
+                return json_encode(array(
+                    "success" => "Waiting for void approval",
+                    "void_item_id" => $void_item_id
+                ));
             } else {
                 return json_encode(array("error" => "Something went wrong while trying to send void approval"));
             }
@@ -291,21 +292,21 @@ class store_operations
             return json_encode(array("error" => $e->getMessage()));
         }
     }
-
     public function checkForVoidItemStatus($json)
     {
         $json = json_decode($json, true);
 
         try {
-            $sql = "SELECT void_status FROM void_items WHERE product_id = :product_id";
+            $sql = "SELECT void_status FROM void_items WHERE product_id = :product_id AND pid = :pid";
             $stmt = $this->conn->prepare($sql);
             $stmt->bindParam(":product_id", $json["product_id"], PDO::PARAM_INT);
+            $stmt->bindParam(":pid", $json["pid"], PDO::PARAM_INT);
             $stmt->execute();
 
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($result) {
-               
+
                 if ($result['void_status'] === 'voided') {
                     echo json_encode(array("status" => "voided"));
                 } else {
@@ -317,6 +318,101 @@ class store_operations
 
         } catch (PDOException $e) {
             echo json_encode(array("error" => $e->getMessage()));
+        }
+    }
+
+    public function insertShiftSummary($json)
+    {
+        $json = json_decode($json, true);
+
+        try {
+            $shiftId = $json['shift_id'];
+            $cashierId = $json['cashier_id'];
+            $currentDate = date('Y-m-d');
+
+            $shiftSql = "
+            SELECT shift_start, shift_end 
+            FROM shifts 
+            WHERE id = :shift_id
+        ";
+            $shiftStmt = $this->conn->prepare($shiftSql);
+            $shiftStmt->bindParam(":shift_id", $shiftId, PDO::PARAM_INT);
+            $shiftStmt->execute();
+
+            $shift = $shiftStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$shift) {
+                echo json_encode(array("error" => "Shift not found."));
+                return;
+            }
+
+            $shiftStart = $shift['shift_start'];
+            $shiftEnd = $shift['shift_end'];
+
+
+            $sql = "
+            SELECT 
+                SUM(total_amount) AS total_sales,
+                COUNT(*) AS total_transactions
+            FROM transactions
+            WHERE cashier_id = :cashier_id 
+            AND transaction_date BETWEEN :shift_start AND :shift_end
+            AND DATE(transaction_date) = :current_date
+        ";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
+            $stmt->bindParam(":shift_start", $shiftStart, PDO::PARAM_STR);
+            $stmt->bindParam(":shift_end", $shiftEnd, PDO::PARAM_STR);
+            $stmt->bindParam(":current_date", $currentDate, PDO::PARAM_STR);
+            $stmt->execute();
+
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$result) {
+                echo json_encode(array("error" => "No transactions found for the given shift and cashier."));
+                return;
+            }
+
+            $voidSql = "
+            SELECT 
+                COUNT(*) AS total_voids
+            FROM void_items
+            WHERE cashier_id = :cashier_id 
+            AND void_date BETWEEN :shift_start AND :shift_end
+            AND DATE(void_date) = :current_date
+            AND void_status = 'void'
+        ";
+            $voidStmt = $this->conn->prepare($voidSql);
+            $voidStmt->bindParam(":cashier_id", $cashierId, PDO::PARAM_INT);
+            $voidStmt->bindParam(":shift_start", $shiftStart, PDO::PARAM_STR);
+            $voidStmt->bindParam(":shift_end", $shiftEnd, PDO::PARAM_STR);
+            $voidStmt->bindParam(":current_date", $currentDate, PDO::PARAM_STR);
+            $voidStmt->execute();
+
+            $voidResult = $voidStmt->fetch(PDO::FETCH_ASSOC);
+
+
+            $sql = "
+            INSERT INTO shift_summaries (user_id, total_sales, total_transactions, total_voids, created_at)
+            VALUES (:user_id, :total_sales, :total_transactions, :total_voids, NOW())
+        ";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(":user_id", $cashierId, PDO::PARAM_INT);
+            $stmt->bindParam(":total_sales", $result["total_sales"]);
+            $stmt->bindParam(":total_transactions", $result["total_transactions"], PDO::PARAM_INT);
+            $stmt->bindParam(":total_voids", $voidResult["total_voids"], PDO::PARAM_INT);
+
+
+            $executeResult = $stmt->execute();
+
+            if ($executeResult) {
+                echo json_encode(array("success" => "Shift summary successfully added"));
+            } else {
+                echo json_encode(array("error" => "Something went wrong inserting the shift summary"));
+            }
+
+        } catch (PDOException $e) {
+            echo json_encode(array("error" => "Exception Error: {$e->getMessage()}"));
         }
     }
 
@@ -368,6 +464,10 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" || $_SERVER["REQUEST_METHOD"] == "POST")
 
             case "checkForItemVoidStatus":
                 echo $store_operations->checkForVoidItemStatus($json);
+                break;
+
+            case "insertShiftSummary":
+                echo $store_operations->insertShiftSummary($json);
                 break;
 
             default:
